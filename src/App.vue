@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { Button as AButton, Segmented as ASegmented, Tooltip as ATooltip } from 'ant-design-vue'
 import { sunsonTracks } from './data/sunsonTracks'
 import { loadFlacMetadata } from './utils/flac'
 
@@ -20,39 +21,60 @@ interface PlaylistTrack {
   status: TrackStatus
 }
 
+interface LrcLine {
+  time: number
+  text: string
+}
+
 const fallbackLyrics = [
-  '在炽热与夜色之间，太阳之子的旋律像日冕一样扩散。',
-  '如果 FLAC 文件内嵌了歌词标签，这里会自动展示真实歌词内容。',
-  '你也可以继续告诉我，我会把歌词同步歌词、高亮滚动等能力继续补上。',
+  '[00:00.00] 光从封面边缘缓慢亮起。',
+  '[00:08.00] 当前歌曲如果存在同名 .lrc 文件，这里会自动同步高亮。',
+  '[00:16.00] 例如：周杰伦 - 太阳之子.flac 对应 周杰伦 - 太阳之子.lrc。',
+  '[00:24.00] 歌词会跟随播放进度居中滚动，也可以点击任意一句跳转。',
 ].join('\n')
+
+const playModeOptions = [
+  {
+    value: 'list' as const,
+    label: '顺序播放',
+    icon: 'list',
+  },
+  {
+    value: 'single' as const,
+    label: '单曲循环',
+    icon: 'single',
+  },
+  {
+    value: 'shuffle' as const,
+    label: '随机播放',
+    icon: 'shuffle',
+  },
+]
 
 const playlist = ref<PlaylistTrack[]>(
   sunsonTracks.map((track) => ({
     ...track,
-    src: `/music/sunson/${track.fileName}`,
+    src: `/music/sunson/${encodeURIComponent(track.fileName)}`,
     coverUrl: null,
     duration: null,
-    artist: '周杰伦专题收藏',
+    artist: '周杰伦',
     album: '太阳之子',
     lyrics: fallbackLyrics,
     status: 'loading',
   })),
 )
 
-const playModeOptions: Array<{ value: PlayMode; label: string; short: string }> = [
-  { value: 'list', label: '顺序播放', short: '顺序' },
-  { value: 'single', label: '单曲循环', short: '单曲' },
-  { value: 'shuffle', label: '随机播放', short: '随机' },
-]
-
 const audioRef = ref<HTMLAudioElement | null>(null)
+const lyricScrollerRef = ref<HTMLElement | null>(null)
+const lyricLineRefs = ref<HTMLElement[]>([])
+
 const activeId = ref(playlist.value[0]?.id ?? '')
 const isPlaying = ref(false)
 const currentTime = ref(0)
 const totalTime = ref(0)
 const pendingPlayId = ref<string | null>(null)
 const playMode = ref<PlayMode>('list')
-const isLyricsOpen = ref(false)
+
 const objectUrls: string[] = []
 const waveformBars = Array.from({ length: 18 }, (_, index) => index)
 
@@ -68,17 +90,58 @@ const totalDuration = computed(() =>
   playlist.value.reduce((sum, track) => sum + (track.duration ?? 0), 0),
 )
 
-const activeLyrics = computed(() => splitLyrics(activeTrack.value?.lyrics || fallbackLyrics))
-
 const currentModeLabel = computed(
   () => playModeOptions.find((option) => option.value === playMode.value)?.label ?? '顺序播放',
 )
 
-function splitLyrics(rawLyrics: string) {
-  return rawLyrics
-    .split(/\r?\n/)
-    .map((line) => line.replace(/\[[^\]]+\]/g, '').trim())
-    .filter(Boolean)
+const lrcLines = computed(() => parseLrc(activeTrack.value?.lyrics || fallbackLyrics))
+const hasTimedLyrics = computed(() => lrcLines.value.some((line) => line.time > 0))
+
+const activeLyricIndex = computed(() => {
+  const lines = lrcLines.value
+  if (!lines.length) {
+    return -1
+  }
+
+  let matched = 0
+  for (let index = 0; index < lines.length; index += 1) {
+    if (currentTime.value >= lines[index].time) {
+      matched = index
+    } else {
+      break
+    }
+  }
+
+  return matched
+})
+
+function parseLrc(rawLyrics: string) {
+  const rows = rawLyrics.split(/\r?\n/).filter(Boolean)
+  const parsed: LrcLine[] = []
+
+  for (const row of rows) {
+    const matches = [...row.matchAll(/\[(\d{2}):(\d{2})(?:\.(\d{1,3}))?\]/g)]
+    const text = row.replace(/\[[^\]]+\]/g, '').trim()
+
+    if (!matches.length) {
+      if (text) {
+        parsed.push({ time: parsed.length * 6, text })
+      }
+      continue
+    }
+
+    for (const match of matches) {
+      const minutes = Number(match[1])
+      const seconds = Number(match[2])
+      const fraction = Number((match[3] || '0').padEnd(3, '0'))
+      parsed.push({
+        time: minutes * 60 + seconds + fraction / 1000,
+        text: text || ' ',
+      })
+    }
+  }
+
+  return parsed.sort((a, b) => a.time - b.time)
 }
 
 function formatTime(seconds: number | null) {
@@ -94,6 +157,49 @@ function formatTime(seconds: number | null) {
 
 function formatTrackIndex(index: number) {
   return String(index + 1).padStart(2, '0')
+}
+
+function replaceExtension(fileName: string, extension: string) {
+  return fileName.replace(/\.[^.]+$/, extension)
+}
+
+function isHtmlDocument(text: string) {
+  const normalized = text.trim().toLowerCase()
+  return normalized.startsWith('<!doctype html') || normalized.startsWith('<html')
+}
+
+async function loadLrc(track: PlaylistTrack) {
+  const preferredName = replaceExtension(track.fileName, '.lrc')
+  const fallbackName = `${replaceExtension(track.fileName, '').trim()}.lrc`
+  const attempts = [...new Set([preferredName, fallbackName])]
+
+  for (const fileName of attempts) {
+    const lrcPath = `/music/sunson/${encodeURIComponent(fileName)}`
+
+    try {
+      const response = await fetch(lrcPath, { cache: 'no-store' })
+      if (!response.ok) {
+        continue
+      }
+
+      const contentType = response.headers.get('content-type') || ''
+      const text = await response.text()
+      if (!text.trim() || isHtmlDocument(text) || contentType.includes('text/html')) {
+        continue
+      }
+
+      track.lyrics = text
+      return
+    } catch {
+      // Try the next candidate name.
+    }
+  }
+}
+
+function setLyricLineRef(el: unknown, index: number) {
+  if (el instanceof HTMLElement) {
+    lyricLineRefs.value[index] = el
+  }
 }
 
 function syncAudioState() {
@@ -126,6 +232,7 @@ async function activateTrack(trackId: string, autoplay = true) {
   currentTime.value = 0
   totalTime.value = playlist.value.find((track) => track.id === trackId)?.duration ?? 0
   isPlaying.value = false
+  lyricLineRefs.value = []
 
   if (!autoplay) {
     return
@@ -172,6 +279,16 @@ function seekAudio(event: Event) {
   currentTime.value = nextValue
 }
 
+function jumpToLyric(time: number) {
+  const audio = audioRef.value
+  if (!audio || !Number.isFinite(time)) {
+    return
+  }
+
+  audio.currentTime = Math.max(time, 0)
+  currentTime.value = audio.currentTime
+}
+
 function getTrackIndex(trackId: string) {
   return playlist.value.findIndex((track) => track.id === trackId)
 }
@@ -191,6 +308,7 @@ function getNextTrackId(direction: 1 | -1) {
     while (nextIndex === currentIndex) {
       nextIndex = Math.floor(Math.random() * playlist.value.length)
     }
+
     return playlist.value[nextIndex]?.id ?? null
   }
 
@@ -211,11 +329,6 @@ async function stepTrack(direction: 1 | -1) {
   await activateTrack(nextTrackId, true)
 }
 
-function cyclePlayMode() {
-  const currentIndex = playModeOptions.findIndex((option) => option.value === playMode.value)
-  playMode.value = playModeOptions[(currentIndex + 1) % playModeOptions.length].value
-}
-
 async function handleEnded() {
   currentTime.value = 0
   isPlaying.value = false
@@ -227,10 +340,6 @@ async function handleEnded() {
   }
 
   await activateTrack(nextTrackId, true)
-}
-
-function closeLyrics() {
-  isLyricsOpen.value = false
 }
 
 async function loadTrackMeta(track: PlaylistTrack) {
@@ -253,11 +362,34 @@ async function loadTrackMeta(track: PlaylistTrack) {
       objectUrls.push(metadata.pictureUrl)
     }
 
+    await loadLrc(track)
     track.status = 'ready'
   } catch {
+    await loadLrc(track)
     track.status = 'ready'
   }
 }
+
+watch(activeLyricIndex, async (index) => {
+  if (index < 0) {
+    return
+  }
+
+  await nextTick()
+  const container = lyricScrollerRef.value
+  const line = lyricLineRefs.value[index]
+  if (!container || !line) {
+    return
+  }
+
+  const targetTop = line.offsetTop - container.clientHeight / 2 + line.clientHeight / 2
+  container.scrollTo({ top: Math.max(targetTop, 0), behavior: 'smooth' })
+})
+
+watch(activeId, async () => {
+  await nextTick()
+  lyricScrollerRef.value?.scrollTo({ top: 0, behavior: 'smooth' })
+})
 
 onMounted(async () => {
   await Promise.all(playlist.value.map((track) => loadTrackMeta(track)))
@@ -273,33 +405,54 @@ onBeforeUnmount(() => {
   <div class="sunson-page">
     <section class="hero-shell">
       <div class="hero-copy">
-        <p class="eyebrow">Jay Chou Special Playlist</p>
-        <h1>太阳之子</h1>
-        <p class="hero-text">
-          以日冕、热浪与夜幕余晖为舞台，整理《太阳之子》专题的 13 首 FLAC 音乐。封面从音频内嵌图中自动提取，页面支持在线播放、下载、歌词阅读与多种播放模式。
-        </p>
+        <div>
+          <p class="eyebrow">Jay Chou Special Playlist</p>
+          <h1>太阳之子</h1>
+          <p class="hero-text">
+            日落之后，节奏像热浪一样慢慢升起。这一页只保留旋律、封面与歌词，让整张专题像一段完整的夜色旅程。
+          </p>
 
-        <div class="hero-stats">
-          <div class="stat-card">
-            <span class="stat-label">专题曲目</span>
-            <strong>{{ playlist.length }}</strong>
-          </div>
-          <div class="stat-card">
-            <span class="stat-label">已就绪</span>
-            <strong>{{ loadedCount }}</strong>
-          </div>
-          <div class="stat-card">
-            <span class="stat-label">总时长</span>
-            <strong>{{ formatTime(totalDuration) }}</strong>
+          <div class="hero-stats">
+            <div class="stat-card">
+              <span class="stat-label">专题曲目</span>
+              <strong>{{ playlist.length }}</strong>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">已就绪</span>
+              <strong>{{ loadedCount }}</strong>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">总时长</span>
+              <strong>{{ formatTime(totalDuration) }}</strong>
+            </div>
           </div>
         </div>
 
-        <div class="feature-ribbon">
-          <span>封面解析</span>
-          <span>歌词弹层</span>
-          <span>{{ currentModeLabel }}</span>
-          <span>波形动效</span>
-        </div>
+        <section class="inline-lyrics">
+          <div class="inline-lyrics-head">
+            <div>
+              <p class="eyebrow">Live Lyrics</p>
+              <h3>{{ activeTrack?.title || '当前歌词' }}</h3>
+            </div>
+            <span class="lyric-status" :class="{ active: isPlaying && hasTimedLyrics }">
+              <span class="lyric-dot"></span>
+              {{ hasTimedLyrics ? (isPlaying ? '同步中' : '暂停中') : '等待歌词' }}
+            </span>
+          </div>
+
+          <div ref="lyricScrollerRef" class="lyric-scroller">
+            <p
+              v-for="(line, index) in lrcLines"
+              :key="`${activeTrack?.id || 'track'}-${index}`"
+              :ref="(el) => setLyricLineRef(el, index)"
+              class="lyric-line"
+              :class="{ active: index === activeLyricIndex }"
+              @click="jumpToLyric(line.time)"
+            >
+              {{ line.text }}
+            </p>
+          </div>
+        </section>
       </div>
 
       <div class="featured-player" v-if="activeTrack">
@@ -322,10 +475,28 @@ onBeforeUnmount(() => {
               <p class="player-kicker">Now Featuring</p>
               <h2>{{ activeTrack.title }}</h2>
             </div>
-            <button class="mode-switch" type="button" @click="cyclePlayMode">
-              <span>播放模式</span>
-              <strong>{{ currentModeLabel }}</strong>
-            </button>
+
+            <a-tooltip :title="currentModeLabel">
+              <a-segmented
+                v-model:value="playMode"
+                class="mode-segmented"
+                :options="playModeOptions.map((item) => ({ value: item.value, label: '' }))"
+              >
+                <template #label="{ value }">
+                  <span class="mode-segment-icon" :data-mode="value">
+                    <svg v-if="value === 'list'" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M4 7h2v2H4zM8 7h12v2H8zM4 11h2v2H4zM8 11h12v2H8zM4 15h2v2H4zM8 15h12v2H8z" />
+                    </svg>
+                    <svg v-else-if="value === 'single'" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M7 7h10v2H9.41l1.3 1.29-1.42 1.42L5.59 8l3.7-3.71 1.42 1.42L9.41 7H17a2 2 0 0 1 2 2v2h-2V9H7zm10 10H7v-2h7.59l-1.3-1.29 1.42-1.42 3.7 3.71-3.7 3.71-1.42-1.42L14.59 17H7a2 2 0 0 1-2-2v-2h2v2h10zm-4-7h2v6h-2v-4.27l-1 .6-1-1.65L13 10z" />
+                    </svg>
+                    <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M16 3h5v5h-2V6.41l-3.29 3.3-1.42-1.42L17.17 5H16V3zM8.29 14.29l1.42 1.42L6.83 18H8v2H3v-5h2v1.17l3.29-3.3zm7.42 1.42 1.42-1.42L19 16.17V15h2v5h-5v-2h1.17l-1.46-1.45zM3 3h5v2H6.83l3.88 3.88-1.42 1.42L5 6.41V8H3V3z" />
+                    </svg>
+                  </span>
+                </template>
+              </a-segmented>
+            </a-tooltip>
           </div>
 
           <p class="player-meta">{{ activeTrack.artist }} · {{ activeTrack.album }}</p>
@@ -342,13 +513,48 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="player-actions">
-          <button class="ghost-icon-btn" type="button" @click="stepTrack(-1)">上一首</button>
-          <button class="primary-btn" type="button" @click="toggleTrack(activeTrack.id)">
-            {{ isPlaying ? '暂停播放' : '开始播放' }}
-          </button>
-          <button class="ghost-icon-btn" type="button" @click="stepTrack(1)">下一首</button>
-          <button class="ghost-btn" type="button" @click="isLyricsOpen = true">查看歌词</button>
-          <a class="ghost-btn" :href="activeTrack.src" :download="activeTrack.fileName">下载 FLAC</a>
+          <a-tooltip title="上一首">
+            <a-button class="icon-button" shape="circle" @click="stepTrack(-1)">
+              <template #icon>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M6 6h2v12H6zm11.5 1.2v9.6c0 .79-.87 1.27-1.54.84L9.5 13.84a1 1 0 0 1 0-1.68l6.46-3.8c.67-.43 1.54.05 1.54.84z" />
+                </svg>
+              </template>
+            </a-button>
+          </a-tooltip>
+
+          <a-tooltip :title="isPlaying ? '暂停播放' : '开始播放'">
+            <a-button class="icon-button icon-button-primary" shape="circle" @click="toggleTrack(activeTrack.id)">
+              <template #icon>
+                <svg v-if="!isPlaying" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M8 5.14v13.72c0 .78.84 1.26 1.5.86l10-6.86a1 1 0 0 0 0-1.72l-10-6.86A1 1 0 0 0 8 5.14z" />
+                </svg>
+                <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M7 5h4v14H7zm6 0h4v14h-4z" />
+                </svg>
+              </template>
+            </a-button>
+          </a-tooltip>
+
+          <a-tooltip title="下一首">
+            <a-button class="icon-button" shape="circle" @click="stepTrack(1)">
+              <template #icon>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M16 6h2v12h-2zM6.5 7.2v9.6c0 .79.87 1.27 1.54.84l6.46-3.8a1 1 0 0 0 0-1.68l-6.46-3.8c-.67-.43-1.54.05-1.54.84z" />
+                </svg>
+              </template>
+            </a-button>
+          </a-tooltip>
+
+          <a-tooltip title="下载 FLAC">
+            <a-button class="icon-button" shape="circle" :href="activeTrack.src" :download="activeTrack.fileName">
+              <template #icon>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M11 4h2v8.17l2.59-2.58L17 11l-5 5-5-5 1.41-1.41L11 12.17V4zm-6 14h14v2H5z" />
+                </svg>
+              </template>
+            </a-button>
+          </a-tooltip>
         </div>
 
         <div class="progress-block">
@@ -384,7 +590,7 @@ onBeforeUnmount(() => {
           <h3>音乐列表</h3>
         </div>
         <p class="section-note">
-          点击任意卡片即可切换当前播放，封面、标题和歌词会优先读取 FLAC 内嵌元数据。
+          每一首都像不同角度的余晖，明暗层次在同一张专题里慢慢展开。
         </p>
       </div>
 
@@ -393,7 +599,11 @@ onBeforeUnmount(() => {
           v-for="(track, index) in playlist"
           :key="track.id"
           class="track-card"
-          :class="{ active: track.id === activeId, missing: track.status === 'missing' }"
+          :class="{
+            active: track.id === activeId,
+            playing: track.id === activeId && isPlaying,
+            missing: track.status === 'missing',
+          }"
         >
           <button class="track-main" type="button" @click="activateTrack(track.id, false)">
             <span class="track-index">{{ formatTrackIndex(index) }}</span>
@@ -413,47 +623,11 @@ onBeforeUnmount(() => {
 
           <div class="track-actions">
             <span class="time-pill">{{ formatTime(track.duration) }}</span>
-            <button class="mini-btn" type="button" @click="toggleTrack(track.id)">
-              {{ track.id === activeId && isPlaying ? '暂停' : '播放' }}
-            </button>
-            <button class="mini-link" type="button" @click="activateTrack(track.id, false); isLyricsOpen = true">
-              歌词
-            </button>
-            <a class="mini-link" :href="track.src" :download="track.fileName">下载</a>
+            <a-button class="mini-action" size="small" @click="toggleTrack(track.id)">播放</a-button>
+            <a-button class="mini-action" size="small" :href="track.src" :download="track.fileName">下载</a-button>
           </div>
         </article>
       </div>
     </section>
-
-    <div v-if="isLyricsOpen && activeTrack" class="lyrics-overlay" @click.self="closeLyrics">
-      <section class="lyrics-panel">
-        <div class="lyrics-header">
-          <div>
-            <p class="eyebrow">Lyrics View</p>
-            <h3>{{ activeTrack.title }}</h3>
-            <p class="lyrics-meta">{{ activeTrack.artist }} · {{ activeTrack.album }}</p>
-          </div>
-          <button class="close-btn" type="button" @click="closeLyrics">关闭</button>
-        </div>
-
-        <div class="lyrics-body">
-          <div class="lyrics-cover" :class="{ empty: !activeTrack.coverUrl }">
-            <img
-              v-if="activeTrack.coverUrl"
-              :src="activeTrack.coverUrl"
-              :alt="`${activeTrack.title} cover`"
-            />
-            <div v-else class="fallback-cover">
-              <span>Sun</span>
-              <strong>{{ activeTrack.title.slice(-2) }}</strong>
-            </div>
-          </div>
-
-          <div class="lyrics-lines">
-            <p v-for="(line, index) in activeLyrics" :key="`${activeTrack.id}-${index}`">{{ line }}</p>
-          </div>
-        </div>
-      </section>
-    </div>
   </div>
 </template>
