@@ -454,45 +454,13 @@ h2 {
   box-shadow: 0 14px 32px rgba(255, 122, 24, 0.18);
 }
 
-.mode-segmented {
-  background: rgba(255, 196, 112, 0.08) !important;
+.mode-group {
+  display: inline-flex;
+  gap: 10px;
+  padding: 6px;
+  border-radius: 999px;
   border: 1px solid rgba(255, 210, 132, 0.16);
-  padding: 6px !important;
-  border-radius: 999px !important;
-}
-
-.mode-segmented .ant-segmented-item {
-  min-width: 54px;
-  min-height: 54px;
-  border-radius: 999px !important;
-}
-
-.mode-segmented .ant-segmented-item-selected {
-  background: linear-gradient(135deg, #ffd27d, #ff8d32) !important;
-  box-shadow: 0 10px 22px rgba(255, 122, 24, 0.22);
-}
-
-.mode-segmented .ant-segmented-thumb {
-  border-radius: 999px !important;
-}
-
-.mode-segment-icon {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 100%;
-  height: 100%;
-  color: #fff3dc;
-}
-
-.mode-segment-icon svg {
-  width: 22px;
-  height: 22px;
-  fill: currentColor;
-}
-
-.mode-segmented .ant-segmented-item-selected .mode-segment-icon {
-  color: #2b180d;
+  background: rgba(255, 196, 112, 0.08);
 }
 
 .waveform {
@@ -529,6 +497,7 @@ h2 {
   display: flex;
   align-items: center;
   gap: 12px;
+  justify-content: space-between;
 }
 
 .player-actions {
@@ -566,6 +535,41 @@ h2 {
   background: rgba(255, 196, 112, 0.08);
   color: #fff4dd;
   box-shadow: none;
+}
+
+.mode-icon-button.ant-btn {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #fff4dd;
+  box-shadow: none;
+}
+
+.mode-icon-button.ant-btn svg {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+}
+
+.mode-icon-button.ant-btn.active {
+  color: #24150d;
+  background: linear-gradient(135deg, #ffd27d, #ff8d32);
+  box-shadow: 0 10px 22px rgba(255, 122, 24, 0.22);
+}
+
+.mode-icon-button.ant-btn:hover,
+.mode-icon-button.ant-btn:focus {
+  color: #fff7ea;
+  border-color: rgba(255, 196, 112, 0.35);
+  background: rgba(255, 196, 112, 0.14);
+}
+
+.mode-icon-button.ant-btn.active:hover,
+.mode-icon-button.ant-btn.active:focus {
+  color: #24150d;
+  background: linear-gradient(135deg, #ffdd95, #ff983f);
 }
 
 .icon-button.ant-btn:hover,
@@ -609,6 +613,35 @@ h2 {
   background: rgba(255, 196, 112, 0.08);
   color: #fff4dd;
   box-shadow: none;
+}
+
+.track-icon-button.ant-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 210, 132, 0.18);
+  background: rgba(255, 196, 112, 0.08);
+  color: #fff4dd;
+  box-shadow: none;
+}
+
+.track-icon-button.ant-btn .ant-btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.track-icon-button.ant-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.track-icon-button.ant-btn:hover,
+.track-icon-button.ant-btn:focus {
+  border-color: rgba(255, 196, 112, 0.42);
+  background: rgba(255, 196, 112, 0.14);
+  color: #fff7ea;
 }
 
 .mini-action.ant-btn:hover,

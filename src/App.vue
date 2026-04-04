@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Button as AButton, Segmented as ASegmented, Tooltip as ATooltip } from 'ant-design-vue'
+import { Button as AButton, Tooltip as ATooltip } from 'ant-design-vue'
 import { sunsonTracks } from './data/sunsonTracks'
 import { loadFlacMetadata } from './utils/flac'
 
@@ -76,7 +76,7 @@ const pendingPlayId = ref<string | null>(null)
 const playMode = ref<PlayMode>('list')
 
 const objectUrls: string[] = []
-const waveformBars = Array.from({ length: 18 }, (_, index) => index)
+const waveformBars = Array.from({ length: 30 }, (_, index) => index)
 
 const activeTrack = computed(
   () => playlist.value.find((track) => track.id === activeId.value) ?? playlist.value[0],
@@ -88,10 +88,6 @@ const loadedCount = computed(
 
 const totalDuration = computed(() =>
   playlist.value.reduce((sum, track) => sum + (track.duration ?? 0), 0),
-)
-
-const currentModeLabel = computed(
-  () => playModeOptions.find((option) => option.value === playMode.value)?.label ?? '顺序播放',
 )
 
 const lrcLines = computed(() => parseLrc(activeTrack.value?.lyrics || fallbackLyrics))
@@ -409,7 +405,7 @@ onBeforeUnmount(() => {
           <p class="eyebrow">Jay Chou Special Playlist</p>
           <h1>太阳之子</h1>
           <p class="hero-text">
-            日落之后，节奏像热浪一样慢慢升起。这一页只保留旋律、封面与歌词，让整张专题像一段完整的夜色旅程。
+          周杰伦第16张个人专辑《太阳之子》正式官宣！暌违3年8个月，13首全新作品重磅集结，在熟悉的周氏旋律之外，更带来极具画面感与叙事性的全新听感体验。
           </p>
 
           <div class="hero-stats">
@@ -476,27 +472,28 @@ onBeforeUnmount(() => {
               <h2>{{ activeTrack.title }}</h2>
             </div>
 
-            <a-tooltip :title="currentModeLabel">
-              <a-segmented
-                v-model:value="playMode"
-                class="mode-segmented"
-                :options="playModeOptions.map((item) => ({ value: item.value, label: '' }))"
-              >
-                <template #label="{ value }">
-                  <span class="mode-segment-icon" :data-mode="value">
-                    <svg v-if="value === 'list'" viewBox="0 0 24 24" aria-hidden="true">
+            <div class="mode-group" role="group" aria-label="播放模式">
+              <a-tooltip v-for="option in playModeOptions" :key="option.value" :title="option.label">
+                <a-button
+                  class="mode-icon-button"
+                  :class="{ active: playMode === option.value }"
+                  shape="circle"
+                  @click="playMode = option.value"
+                >
+                  <template #icon>
+                    <svg v-if="option.value === 'list'" viewBox="0 0 24 24" aria-hidden="true">
                       <path d="M4 7h2v2H4zM8 7h12v2H8zM4 11h2v2H4zM8 11h12v2H8zM4 15h2v2H4zM8 15h12v2H8z" />
                     </svg>
-                    <svg v-else-if="value === 'single'" viewBox="0 0 24 24" aria-hidden="true">
+                    <svg v-else-if="option.value === 'single'" viewBox="0 0 24 24" aria-hidden="true">
                       <path d="M7 7h10v2H9.41l1.3 1.29-1.42 1.42L5.59 8l3.7-3.71 1.42 1.42L9.41 7H17a2 2 0 0 1 2 2v2h-2V9H7zm10 10H7v-2h7.59l-1.3-1.29 1.42-1.42 3.7 3.71-3.7 3.71-1.42-1.42L14.59 17H7a2 2 0 0 1-2-2v-2h2v2h10zm-4-7h2v6h-2v-4.27l-1 .6-1-1.65L13 10z" />
                     </svg>
                     <svg v-else viewBox="0 0 24 24" aria-hidden="true">
                       <path d="M16 3h5v5h-2V6.41l-3.29 3.3-1.42-1.42L17.17 5H16V3zM8.29 14.29l1.42 1.42L6.83 18H8v2H3v-5h2v1.17l3.29-3.3zm7.42 1.42 1.42-1.42L19 16.17V15h2v5h-5v-2h1.17l-1.46-1.45zM3 3h5v2H6.83l3.88 3.88-1.42 1.42L5 6.41V8H3V3z" />
                     </svg>
-                  </span>
-                </template>
-              </a-segmented>
-            </a-tooltip>
+                  </template>
+                </a-button>
+              </a-tooltip>
+            </div>
           </div>
 
           <p class="player-meta">{{ activeTrack.artist }} · {{ activeTrack.album }}</p>
@@ -507,7 +504,7 @@ onBeforeUnmount(() => {
               v-for="bar in waveformBars"
               :key="bar"
               class="wave-bar"
-              :style="{ '--delay': `${bar * 0.08}s`, '--height': `${28 + ((bar % 6) + 1) * 7}px` }"
+              :style="{ '--delay': `${bar * 0.08}s`, '--height': `${10 + ((bar % 6) + 1) * 7}px` }"
             ></span>
           </div>
         </div>
@@ -546,7 +543,7 @@ onBeforeUnmount(() => {
             </a-button>
           </a-tooltip>
 
-          <a-tooltip title="下载 FLAC">
+          <a-tooltip title="下载">
             <a-button class="icon-button" shape="circle" :href="activeTrack.src" :download="activeTrack.fileName">
               <template #icon>
                 <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -590,7 +587,7 @@ onBeforeUnmount(() => {
           <h3>音乐列表</h3>
         </div>
         <p class="section-note">
-          每一首都像不同角度的余晖，明暗层次在同一张专题里慢慢展开。
+          像不同角度的余晖，明暗层次在同一张专题里舒展。
         </p>
       </div>
 
@@ -623,8 +620,27 @@ onBeforeUnmount(() => {
 
           <div class="track-actions">
             <span class="time-pill">{{ formatTime(track.duration) }}</span>
-            <a-button class="mini-action" size="small" @click="toggleTrack(track.id)">播放</a-button>
-            <a-button class="mini-action" size="small" :href="track.src" :download="track.fileName">下载</a-button>
+            <a-tooltip :title="track.id === activeId && isPlaying ? '暂停播放' : '开始播放'">
+              <a-button class="track-icon-button" shape="circle" @click="toggleTrack(track.id)">
+                <template #icon>
+                  <svg v-if="track.id === activeId && isPlaying" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M7 5h4v14H7zm6 0h4v14h-4z" />
+                  </svg>
+                  <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M8 5.14v13.72c0 .78.84 1.26 1.5.86l10-6.86a1 1 0 0 0 0-1.72l-10-6.86A1 1 0 0 0 8 5.14z" />
+                  </svg>
+                </template>
+              </a-button>
+            </a-tooltip>
+            <a-tooltip title="下载">
+              <a-button class="track-icon-button" shape="circle" :href="track.src" :download="track.fileName">
+                <template #icon>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M11 4h2v8.17l2.59-2.58L17 11l-5 5-5-5 1.41-1.41L11 12.17V4zm-6 14h14v2H5z" />
+                  </svg>
+                </template>
+              </a-button>
+            </a-tooltip>
           </div>
         </article>
       </div>
